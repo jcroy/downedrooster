@@ -1,0 +1,33 @@
+# downedrooster configuration — copy to /etc/downedrooster.conf on the router
+# and `chmod 600 /etc/downedrooster.conf` (it holds a token).
+# Shell syntax; sourced by /usr/bin/downedrooster.sh.
+
+# GitHub repo hosting the Pages site, "owner/name".
+GITHUB_REPO="jcroy/downedrooster"
+
+# Fine-grained personal access token scoped to ONLY that repo, with
+# "Contents: read and write" permission. Create one at:
+#   https://github.com/settings/personal-access-tokens/new
+GITHUB_TOKEN=""
+
+# Branch GitHub Pages serves from.
+#GITHUB_BRANCH="main"
+
+# The internet counts as "up" if ANY of these answers one ping.
+#PING_TARGETS="1.1.1.1 8.8.8.8 9.9.9.9"
+
+# Optional second monitor for a host you depend on (e.g. the DB server your
+# apps talk to). Any shell command; exit 0 means up. Empty disables it.
+# Its outages are recorded with "monitor": "db".
+#DB_CHECK_CMD="ping -c 1 -W 2 db.example.com"
+#DB_CHECK_CMD="nc -w 3 db.example.com 5432 </dev/null"
+
+# How often to publish an "I'm alive" heartbeat (each one is a commit).
+# The dashboard uses it to tell "no outages" apart from "monitor dead".
+# 0 disables.
+#HEARTBEAT_HOURS="6"
+
+# Where transition state and not-yet-published outages live. On flash, so an
+# outage that includes a power cut survives reboot — written only on up/down
+# transitions, never on the every-minute check.
+#STATE_DIR="/etc/downedrooster"

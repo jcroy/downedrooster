@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Downed Rooster — ISP outage almanac</title>
+<meta name="description" content="A small almanac of ISP outages, kept by an OpenWrt router.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐓</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f4eee0;
+    --surface: #fcf9f1;
+    --ink: #211b12;
+    --ink-2: #5b5342;
+    --muted: #8a8171;
+    --grid: #e6ddc8;
+    --baseline: #cbc1a8;
+    --ring: rgba(33, 27, 18, .14);
+    --accent: #b52f2f;            /* comb red (brand) */
+    --series: #e34948;            /* chart hue — validated on --surface */
+    --series-soft: rgba(227, 73, 72, .10);
+    --good: #0ca30c;
+    --warn: #fab219;
+    --bad: #d03b3b;
+    --grain-opacity: .05;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #100e0a;
+      --surface: #1a1713;
+      --ink: #f0eadd;
+      --ink-2: #b5ac99;
+      --muted: #8a8171;
+      --grid: #2b2620;
+      --baseline: #3d3729;
+      --ring: rgba(240, 234, 221, .13);
+      --accent: #e66767;
+      --series: #e66767;          /* dark step — validated on dark surface */
+      --series-soft: rgba(230, 103, 103, .14);
+      --grain-opacity: .07;
+    }
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.55;
+    background: var(--page);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  body::after {                    /* paper grain */
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 40;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+  }
+  a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+  a:hover { color: var(--accent); }
+
+  .wrap { max-width: 960px; margin: 0 auto; padding: 40px 20px 56px; }
+
+  /* ---------- masthead ---------- */
+  .masthead { text-align: center; padding-bottom: 26px; border-bottom: 3px double var(--baseline); }
+  .masthead svg { width: 92px; height: auto; display: block; margin: 0 auto 6px; }
+  .masthead h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-optical-sizing: auto;
+    font-weight: 700;
+    font-size: clamp(2.1rem, 6.5vw, 3.4rem);
+    letter-spacing: .015em;
+    line-height: 1.05;
+  }
+  .masthead .tag {
+    margin-top: 10px;
+    font-size: 11px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .demo-note {
+    margin-top: 22px;
+    padding: 8px 14px;
+    background: var(--series-soft);
+    border: 1px solid var(--ring);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--ink-2);
+    text-align: center;
+  }
+  .demo-note[hidden] { display: none; }
+
+  /* ---------- status hero ---------- */
+  .status { text-align: center; padding: 34px 0 8px; }
+  .status .line {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 12px;
+    font-size: clamp(1.15rem, 3.4vw, 1.5rem);
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .status .dot { font-size: .78em; }
+  .status.good .dot { color: var(--good); }
+  .status.warn .dot { color: var(--warn); }
+  .status.idle .dot { color: var(--muted); }
+  .status .sub { margin-top: 8px; font-size: 12.5px; color: var(--ink-2); }
+  .status .sub .sep { color: var(--muted); padding: 0 .4em; }
+
+  /* ---------- filter row ---------- */
+  .filters {
+    display: flex;
+    gap: 6px;
+    margin: 30px 0 14px;
+    align-items: center;
+  }
+  .filters .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .18em; color: var(--muted); margin-right: 8px; }
+  .filters button {
+    font: inherit;
+    font-size: 12px;
+    letter-spacing: .06em;
+    padding: 5px 12px;
+    background: none;
+    color: var(--ink-2);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .filters button:hover { border-color: var(--ring); }
+  .filters button[aria-pressed="true"] {
+    color: var(--ink);
+    font-weight: 600;
+    background: var(--surface);
+    border-color: var(--ring);
+  }
+  .filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- tiles ---------- */
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .tile, .card {
+    background: var(--surface);
+    border: 1px solid var(--ring);
+    border-radius: 10px;
+  }
+  .tile { padding: 16px 18px 14px; }
+  .tile .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); }
+  .tile .val { margin-top: 6px; font-size: 27px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; }
+  .tile .note { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+
+  /* ---------- cards ---------- */
+  .card { margin-top: 12px; padding: 20px 22px 18px; }
+  .card h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: .01em;
+  }
+  .card .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  /* ---------- chart ---------- */
+  .chartwrap { position: relative; margin-top: 14px; }
+  .chartwrap svg { display: block; width: 100%; }
+  .bar { fill: var(--series); }
+  .bar.hot { filter: brightness(1.14); }
+  .hit { fill: transparent; cursor: crosshair; outline: none; }
+  .hit:focus-visible { stroke: var(--accent); stroke-width: 1.5; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .axisline { stroke: var(--baseline); stroke-width: 1; }
+  .ticktext, .xtext {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    fill: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--ink);
+    color: var(--page);
+    border-radius: 6px;
+    padding: 7px 11px;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: nowrap;
+    z-index: 30;
+    visibility: hidden;
+  }
+  .tooltip .v { font-weight: 600; font-size: 13px; }
+  .tooltip .k { opacity: .72; font-size: 11px; }
+  .empty { padding: 34px 8px; text-align: center; color: var(--muted); font-size: 13px; }
+  .empty[hidden] { display: none; }
+
+  /* ---------- table ---------- */
+  .tscroll { overflow-x: auto; margin-top: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th {
+    text-align: left;
+    font-weight: 400;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--muted);
+    padding: 0 14px 8px 0;
+    border-bottom: 1px solid var(--baseline);
+    white-space: nowrap;
+  }
+  td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; }
+  th.num, td.num { text-align: right; padding-right: 0; }
+  .mon {
+    display: inline-block;
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 1px 8px;
+    border: 1px solid var(--ring);
+    border-radius: 999px;
+    color: var(--ink-2);
+  }
+  .truncnote { margin-top: 10px; font-size: 11.5px; color: var(--muted); }
+  .truncnote[hidden] { display: none; }
+
+  /* ---------- footer ---------- */
+  footer {
+    margin-top: 44px;
+    padding-top: 18px;
+    border-top: 1px solid var(--baseline);
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  footer .sep { padding: 0 .5em; }
+
+  /* ---------- entrance ---------- */
+  @media (prefers-reduced-motion: no-preference) {
+    .status, .filters, .tile, .card, footer {
+      animation: rise .55s cubic-bezier(.2, .7, .3, 1) both;
+    }
+    .filters { animation-delay: .05s; }
+    .tile:nth-child(1) { animation-delay: .08s; }
+    .tile:nth-child(2) { animation-delay: .13s; }
+    .tile:nth-child(3) { animation-delay: .18s; }
+    .tile:nth-child(4) { animation-delay: .23s; }
+    .card { animation-delay: .28s; }
+    .card + .card { animation-delay: .36s; }
+    footer { animation-delay: .44s; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: none; }
+    }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <!-- weathervane rooster -->
+    <svg viewBox="0 0 96 84" aria-hidden="true">
+      <g fill="var(--ink)">
+        <!-- comb (drawn first; head overlaps its base) -->
+        <circle cx="30" cy="15.5" r="2.4" fill="var(--accent)"/>
+        <circle cx="34" cy="13.2" r="2.6" fill="var(--accent)"/>
+        <circle cx="37.8" cy="15.3" r="2.4" fill="var(--accent)"/>
+        <!-- tail plumes -->
+        <path d="M59 42 Q70 33 73 19" fill="none" stroke="var(--ink)" stroke-width="3.6" stroke-linecap="round"/>
+        <path d="M60 44 Q77 37 83 27" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>
+        <path d="M61 46.5 Q80 44 86 37" fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- neck -->
+        <path d="M40 45 Q33 36 31.5 23 L40 25 Q45 34 48 45 Z"/>
+        <!-- body -->
+        <ellipse cx="50" cy="43" rx="13" ry="9.5"/>
+        <!-- head -->
+        <circle cx="33.5" cy="21.5" r="5.6"/>
+        <!-- beak -->
+        <path d="M23.5 21.5 L29 19.2 L29 23.8 Z"/>
+        <!-- wattle -->
+        <circle cx="31.5" cy="29" r="2.3" fill="var(--accent)"/>
+        <!-- eye -->
+        <circle cx="32.2" cy="20.4" r="1.05" fill="var(--page)"/>
+        <!-- legs -->
+        <path d="M46.5 51 V58 M53.5 51 V58" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" fill="none"/>
+        <!-- vane arrow -->
+        <rect x="8" y="58" width="80" height="2" rx="1"/>
+        <path d="M6 59 L20 52.5 L20 65.5 Z"/>
+        <rect x="76" y="53" width="3.5" height="12" rx="1"/>
+        <rect x="83" y="53" width="3.5" height="12" rx="1"/>
+        <!-- post -->
+        <rect x="47" y="60" width="2" height="18"/>
+        <circle cx="48" cy="81" r="2.6"/>
+      </g>
+    </svg>
+    <h1>Downed Rooster</h1>
+    <p class="tag">An ISP outage almanac &middot; kept by an OpenWrt router</p>
+  </header>
+
+  <div class="demo-note" id="demonote" hidden>
+    Demo data — these records are generated. Remove <strong>?demo</strong> from the URL for live data.
+  </div>
+
+  <section class="status idle" id="status" aria-live="polite">
+    <div class="line"><span class="dot" id="statusdot">◌</span><span id="statusword">Reading the log…</span></div>
+    <p class="sub" id="statussub">&nbsp;</p>
+  </section>
+
+  <nav class="filters" aria-label="Date range">
+    <span class="lbl">Window</span>
+    <button data-days="7" aria-pressed="false">7 days</button>
+    <button data-days="30" aria-pressed="true">30 days</button>
+    <button data-days="90" aria-pressed="false">90 days</button>
+  </nav>
+
+  <section class="tiles" aria-label="Summary">
+    <div class="tile"><div class="lbl">Uptime</div><div class="val" id="t-uptime">—</div><div class="note" id="t-uptime-n">&nbsp;</div></div>
+    <div class="tile"><div class="lbl">Outages</div><div class="val" id="t-count">—</div><div class="note" id="t-count-n">&nbsp;</div></div>
+    <div class="tile"><div class="lbl">Time offline</div><div class="val" id="t-down">—</div><div class="note" id="t-down-n">&nbsp;</div></div>
+    <div class="tile"><div class="lbl">Longest outage</div><div class="val" id="t-longest">—</div><div class="note" id="t-longest-n">&nbsp;</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Downtime, day by day</h2>
+    <p class="sub">minutes offline per local day</p>
+    <div class="chartwrap" id="chartwrap">
+      <div id="chart" role="group" aria-label="Column chart of minutes offline per day"></div>
+      <div class="empty" id="chartempty" hidden></div>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>The outage log</h2>
+    <p class="sub">every recorded drop, newest first</p>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Began</th><th>Restored</th><th>Monitor</th><th class="num">Duration</th></tr></thead>
+        <tbody id="logbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="logempty" hidden></div>
+    <p class="truncnote" id="truncnote" hidden></p>
+  </section>
+
+  <footer>
+    <span>records: <a id="datalink" href="data/outages.jsonl">data/outages.jsonl</a></span><span class="sep">&middot;</span><span>full history in the <a id="repolink" href="https://github.com/jcroy/downedrooster">commit log</a></span><span class="sep">&middot;</span><span><a href="?demo">demo view</a></span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (s) { return document.querySelector(s); };
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  var state = {
+    outages: [],       // {monitor, start: Date, end: Date, dur: seconds} newest first
+    heartbeat: null,
+    rangeDays: 30,
+    demo: new URLSearchParams(location.search).has('demo')
+  };
+
+  /* ---------- formatting ---------- */
+
+  function fmtDur(s) {
+    s = Math.max(0, Math.round(s));
+    if (s < 90) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + pad(s % 60) + 's';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ' + pad(Math.floor(s % 3600 / 60)) + 'm';
+    return Math.floor(s / 86400) + 'd ' + Math.floor(s % 86400 / 3600) + 'h';
+  }
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function fmtMins(min) {
+    if (min < 1) return Math.round(min * 60) + 's';
+    if (min < 60) return (min < 10 ? min.toFixed(1).replace(/\.0$/, '') : Math.round(min)) + ' min';
+    return Math.floor(min / 60) + 'h ' + pad(Math.round(min % 60)) + 'm';
+  }
+
+  function fmtAgo(d) {
+    var s = (Date.now() - d.getTime()) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' min ago';
+    if (s < 129600) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + ' days ago';
+  }
+
+  function fmtWhen(d) {
+    var opts = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return d.toLocaleString(undefined, opts);
+  }
+
+  /* ---------- data ---------- */
+
+  function parseOutages(text) {
+    return text.split('\n')
+      .map(function (l) { l = l.trim(); if (!l) return null; try { return JSON.parse(l); } catch (e) { return null; } })
+      .filter(Boolean)
+      .map(function (o) {
+        return {
+          monitor: String(o.monitor || 'wan'),
+          start: new Date(o.start),
+          end: new Date(o.end),
+          dur: Number(o.duration_seconds) || 0
+        };
+      })
+      .filter(function (o) { return !isNaN(o.start) && !isNaN(o.end); })
+      .sort(function (a, b) { return b.start - a.start; });
+  }
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function demoData() {
+    var rand = mulberry32(20260720);
+    var now = Date.now();
+    var outs = [];
+    for (var i = 0; i < 26; i++) {
+      var start = now - (rand() * 88 + 0.2) * 864e5;
+      var r = rand(), dur;
+      if (r < 0.5) dur = 40 + rand() * 300;
+      else if (r < 0.85) dur = 600 + rand() * 3000;
+      else dur = 3600 + rand() * 4 * 3600;
+      dur = Math.round(dur);
+      outs.push({ monitor: rand() < 0.82 ? 'wan' : 'db', start: new Date(start), end: new Date(start + dur * 1000), dur: dur });
+    }
+    outs.sort(function (a, b) { return b.start - a.start; });
+    return { outages: outs, heartbeat: { last_heartbeat: new Date(now - 47 * 60000).toISOString(), interval_hours: 6 } };
+  }
+
+  function load() {
+    if (state.demo) {
+      var d = demoData();
+      state.outages = d.outages;
+      state.heartbeat = d.heartbeat;
+      $('#demonote').hidden = false;
+      render();
+      return;
+    }
+    Promise.allSettled([
+      fetch('data/outages.jsonl', { cache: 'no-store' }),
+      fetch('data/heartbeat.json', { cache: 'no-store' })
+    ]).then(function (res) {
+      var jobs = [];
+      if (res[0].status === 'fulfilled' && res[0].value.ok) {
+        jobs.push(res[0].value.text().then(function (t) { state.outages = parseOutages(t); }));
+      }
+      if (res[1].status === 'fulfilled' && res[1].value.ok) {
+        jobs.push(res[1].value.json().then(function (j) { state.heartbeat = j; }).catch(function () {}));
+      }
+      return Promise.allSettled(jobs);
+    }).then(render, render);
+  }
+
+  /* ---------- status ---------- */
+
+  function renderStatus() {
+    var el = $('#status'), dot = $('#statusdot'), word = $('#statusword'), sub = $('#statussub');
+    var hb = state.heartbeat;
+    var last = hb && hb.last_heartbeat ? new Date(hb.last_heartbeat) : null;
+    if (last && isNaN(last)) last = null;
+    var iv = hb && Number(hb.interval_hours) > 0 ? Number(hb.interval_hours) : 6;
+
+    var cls, glyph, text, subText;
+    if (!last) {
+      cls = 'idle'; glyph = '◌'; text = 'Awaiting first report';
+      subText = 'The router hasn’t crowed yet — install the monitor and give it a minute.';
+    } else if (Date.now() - last.getTime() < (iv * 2 + 0.5) * 3600e3) {
+      cls = 'good'; glyph = '●'; text = 'All clear';
+      subText = 'The rooster last crowed ' + fmtAgo(last) + ' · reports every ' + iv + 'h';
+    } else {
+      cls = 'warn'; glyph = '▲'; text = 'Monitor silent';
+      subText = 'No heartbeat since ' + fmtWhen(last) + ' — the line (or the router) may be down right now.';
+    }
+
+    el.className = 'status ' + cls;
+    dot.textContent = glyph;
+    word.textContent = text;
+    sub.textContent = '';
+    sub.appendChild(document.createTextNode(subText));
+    if (state.outages.length) {
+      var lo = state.outages[0];
+      var sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '·';
+      sub.appendChild(sep);
+      sub.appendChild(document.createTextNode('last outage ' + fmtAgo(lo.end) + ' (' + fmtDur(lo.dur) + ')'));
+    }
+  }
+
+  /* ---------- stats tiles ---------- */
+
+  function renderTiles() {
+    var now = Date.now();
+    var from = now - state.rangeDays * 864e5;
+    var span = now - from;
+    var down = 0, count = 0, longest = null;
+    state.outages.forEach(function (o) {
+      var ov = Math.min(o.end.getTime(), now) - Math.max(o.start.getTime(), from);
+      if (ov <= 0) return;
+      down += ov;
+      count++;
+      if (!longest || o.dur > longest.dur) longest = o;
+    });
+
+    var pct = 100 * (1 - down / span);
+    $('#t-uptime').textContent = down === 0 ? '100%' : pct.toFixed(pct > 99.9 ? 3 : 2) + '%';
+    $('#t-uptime-n').textContent = 'of the last ' + state.rangeDays + ' days';
+    $('#t-count').textContent = String(count);
+    $('#t-count-n').textContent = count === 1 ? 'drop recorded' : 'drops recorded';
+    $('#t-down').textContent = down === 0 ? '0s' : fmtDur(down / 1000);
+    $('#t-down-n').textContent = 'in total';
+    $('#t-longest').textContent = longest ? fmtDur(longest.dur) : '—';
+    $('#t-longest-n').textContent = longest
+      ? longest.start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : 'nothing yet';
+  }
+
+  /* ---------- chart ---------- */
+
+  function dayBuckets(days) {
+    var now = new Date();
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
+    var out = [];
+    for (var i = 0; i < days; i++) {
+      var d0 = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      var d1 = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i + 1);
+      out.push({
+        d0: d0, d1: d1,
+        label: d0.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        minutes: 0, count: 0
+      });
+    }
+    state.outages.forEach(function (o) {
+      out.forEach(function (b) {
+        var ov = Math.min(o.end.getTime(), b.d1.getTime()) - Math.max(o.start.getTime(), b.d0.getTime());
+        if (ov > 0) { b.minutes += ov / 60000; b.count++; }
+      });
+    });
+    return out;
+  }
+
+  function niceCeil(v) {
+    if (v <= 1) return 1;
+    var pow = Math.pow(10, Math.floor(Math.log10(v)));
+    var steps = [1, 2, 5, 10];
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i] * pow >= v) return steps[i] * pow;
+    }
+    return 10 * pow;
+  }
+
+  function svgEl(tag, attrs) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function barPath(x, y, w, h, yBase) {
+    var r = Math.min(4, w / 2, h);
+    return 'M' + x + ' ' + yBase +
+      ' V' + (y + r) +
+      ' Q' + x + ' ' + y + ' ' + (x + r) + ' ' + y +
+      ' H' + (x + w - r) +
+      ' Q' + (x + w) + ' ' + y + ' ' + (x + w) + ' ' + (y + r) +
+      ' V' + yBase + ' Z';
+  }
+
+  var tipHideTimer = null;
+
+  function showTip(bucket, cx, barTop) {
+    var tip = $('#tooltip');
+    var wrap = $('#chartwrap');
+    clearTimeout(tipHideTimer);
+    tip.textContent = '';
+    var v = document.createElement('div');
+    v.className = 'v';
+    v.textContent = bucket.minutes > 0 ? fmtMins(bucket.minutes) + ' offline' : 'No downtime';
+    var k = document.createElement('div');
+    k.className = 'k';
+    k.textContent = bucket.label + (bucket.count ? ' · ' + bucket.count + (bucket.count === 1 ? ' outage' : ' outages') : '');
+    tip.appendChild(v);
+    tip.appendChild(k);
+    tip.style.visibility = 'hidden';
+    tip.style.display = 'block';
+    var tw = tip.offsetWidth, th = tip.offsetHeight, ww = wrap.clientWidth;
+    var left = Math.max(4, Math.min(cx - tw / 2, ww - tw - 4));
+    var top = barTop - th - 10;
+    if (top < 0) top = barTop + 14;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.style.visibility = 'visible';
+  }
+
+  function hideTip() {
+    tipHideTimer = setTimeout(function () { $('#tooltip').style.visibility = 'hidden'; }, 60);
+  }
+
+  function renderChart() {
+    var host = $('#chart');
+    var empty = $('#chartempty');
+    var wrap = $('#chartwrap');
+    var buckets = dayBuckets(state.rangeDays);
+    var total = buckets.reduce(function (s, b) { return s + b.minutes; }, 0);
+
+    host.textContent = '';
+    if (total === 0) {
+      empty.hidden = false;
+      empty.textContent = state.outages.length
+        ? 'No downtime inside this window.'
+        : 'No outages recorded yet — the rooster stands guard.';
+      return;
+    }
+    empty.hidden = true;
+
+    var W = Math.max(320, wrap.clientWidth);
+    var H = 250;
+    var m = { t: 14, r: 6, b: 28, l: 42 };
+    var plotW = W - m.l - m.r, plotH = H - m.t - m.b;
+    var yBase = m.t + plotH;
+
+    var maxV = Math.max.apply(null, buckets.map(function (b) { return b.minutes; }));
+    var yMax = niceCeil(maxV);
+    var divisions = yMax >= 5
+      ? ([5, 4].find(function (d) { return Number.isInteger(yMax / d); }) || 5)
+      : yMax; // yMax of 1 or 2 → integer ticks of 1
+
+    var svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H });
+
+    // gridlines + y ticks
+    for (var t = 1; t <= divisions; t++) {
+      var val = yMax / divisions * t;
+      var y = m.t + plotH * (1 - val / yMax);
+      svg.appendChild(svgEl('line', { class: 'gridline', x1: m.l, x2: W - m.r, y1: y, y2: y }));
+      var lab = svgEl('text', { class: 'ticktext', x: m.l - 8, y: y, 'text-anchor': 'end', dy: '0.32em' });
+      lab.textContent = Number.isInteger(val) ? val : val.toFixed(1);
+      svg.appendChild(lab);
+    }
+
+    // baseline
+    svg.appendChild(svgEl('line', { class: 'axisline', x1: m.l, x2: W - m.r, y1: yBase, y2: yBase }));
+
+    var band = plotW / buckets.length;
+    var barW = Math.min(24, Math.max(2, band - 2)); // ≥2px surface gap between bars
+    var xStep = Math.ceil(buckets.length / 6);
+
+    buckets.forEach(function (b, i) {
+      var x0 = m.l + band * i;
+      var cx = x0 + band / 2;
+
+      if (b.minutes > 0) {
+        var h = Math.max(1.5, plotH * (b.minutes / yMax));
+        var y = yBase - h;
+        var bar = svgEl('path', { class: 'bar', d: barPath(cx - barW / 2, y, barW, h, yBase) });
+        bar.dataset.i = i;
+        svg.appendChild(bar);
+      }
+
+      // sparse x labels, anchored so "today" is always labeled
+      if ((buckets.length - 1 - i) % xStep === 0) {
+        var xl = svgEl('text', { class: 'xtext', x: cx, y: H - 8, 'text-anchor': 'middle' });
+        xl.textContent = b.label;
+        svg.appendChild(xl);
+      }
+    });
+
+    // hit layer on top — full-band targets, keyboard reachable
+    buckets.forEach(function (b, i) {
+      var x0 = m.l + band * i;
+      var cx = x0 + band / 2;
+      var barTop = b.minutes > 0 ? yBase - Math.max(1.5, plotH * (b.minutes / yMax)) : yBase - 8;
+      var hit = svgEl('rect', { class: 'hit', x: x0, y: m.t, width: band, height: plotH, tabindex: 0, role: 'img' });
+      hit.setAttribute('aria-label', b.label + ': ' + (b.minutes > 0 ? fmtMins(b.minutes) + ' offline, ' + b.count + (b.count === 1 ? ' outage' : ' outages') : 'no downtime'));
+      function on() {
+        showTip(b, cx, barTop);
+        var mark = svg.querySelector('.bar[data-i="' + i + '"]');
+        if (mark) mark.classList.add('hot');
+      }
+      function off() {
+        hideTip();
+        var mark = svg.querySelector('.bar[data-i="' + i + '"]');
+        if (mark) mark.classList.remove('hot');
+      }
+      hit.addEventListener('pointerenter', on);
+      hit.addEventListener('pointerleave', off);
+      hit.addEventListener('focus', on);
+      hit.addEventListener('blur', off);
+      svg.appendChild(hit);
+    });
+
+    host.appendChild(svg);
+  }
+
+  /* ---------- outage log ---------- */
+
+  function renderLog() {
+    var body = $('#logbody');
+    var empty = $('#logempty');
+    var trunc = $('#truncnote');
+    var from = Date.now() - state.rangeDays * 864e5;
+    var rows = state.outages.filter(function (o) { return o.end.getTime() > from; });
+
+    body.textContent = '';
+    empty.hidden = rows.length > 0;
+    if (!rows.length) {
+      empty.textContent = state.outages.length ? 'No outages inside this window.' : 'The log is blank. Long may it stay so.';
+    }
+
+    var MAX = 100;
+    trunc.hidden = rows.length <= MAX;
+    if (rows.length > MAX) trunc.textContent = 'Showing the ' + MAX + ' most recent of ' + rows.length + ' outages — the rest live in data/outages.jsonl.';
+
+    rows.slice(0, MAX).forEach(function (o) {
+      var tr = document.createElement('tr');
+      var began = document.createElement('td');
+      began.textContent = fmtWhen(o.start);
+      var ended = document.createElement('td');
+      ended.textContent = o.start.toDateString() === o.end.toDateString()
+        ? o.end.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        : fmtWhen(o.end);
+      var mon = document.createElement('td');
+      var tag = document.createElement('span');
+      tag.className = 'mon';
+      tag.textContent = o.monitor === 'wan' ? 'internet' : o.monitor;
+      mon.appendChild(tag);
+      var dur = document.createElement('td');
+      dur.className = 'num';
+      dur.textContent = fmtDur(o.dur);
+      tr.appendChild(began); tr.appendChild(ended); tr.appendChild(mon); tr.appendChild(dur);
+      body.appendChild(tr);
+    });
+  }
+
+  function render() {
+    renderStatus();
+    renderTiles();
+    renderChart();
+    renderLog();
+  }
+
+  /* ---------- wiring ---------- */
+
+  document.querySelectorAll('.filters button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      state.rangeDays = Number(btn.dataset.days);
+      document.querySelectorAll('.filters button').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b === btn));
+      });
+      renderTiles(); renderChart(); renderLog();
+    });
+  });
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderChart, 150);
+  });
+
+  load();
+  if (!state.demo) setInterval(load, 5 * 60000);
+})();
+</script>
+</body>
+</html>

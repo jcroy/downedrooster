@@ -17,6 +17,7 @@ GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 PING_TARGETS="${PING_TARGETS:-1.1.1.1 8.8.8.8 9.9.9.9}"
 DB_CHECK_CMD="${DB_CHECK_CMD:-}"        # optional second monitor; exit 0 = up
 HEARTBEAT_HOURS="${HEARTBEAT_HOURS:-6}" # 0 disables heartbeat
+PROVIDER="${PROVIDER:-}"                # ISP name shown on the dashboard (never the IP)
 STATE_DIR="${STATE_DIR:-/etc/downedrooster}"
 OUTAGES_PATH="${OUTAGES_PATH:-data/outages.jsonl}"
 HEARTBEAT_PATH="${HEARTBEAT_PATH:-data/heartbeat.json}"
@@ -124,7 +125,7 @@ if [ "$HEARTBEAT_HOURS" -gt 0 ] 2>/dev/null; then
         sha=""
         resp=$(gh_get "$HEARTBEAT_PATH" 2>/dev/null)
         [ -n "$resp" ] && sha=$(printf '%s' "$resp" | jsonfilter -e '@.sha')
-        payload=$(printf '{"last_heartbeat":"%s","interval_hours":%s}' "$NOW_ISO" "$HEARTBEAT_HOURS")
+        payload=$(printf '{"last_heartbeat":"%s","interval_hours":%s,"provider":"%s"}' "$NOW_ISO" "$HEARTBEAT_HOURS" "$PROVIDER")
         b64=$(printf '%s\n' "$payload" | base64 | tr -d '\n')
         gh_put "$HEARTBEAT_PATH" "heartbeat $NOW_ISO" "$b64" "$sha" && echo "$NOW" > "$hb"
     fi

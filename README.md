@@ -109,6 +109,8 @@ python3 -m http.server -d . 8080
 
 ## Notes
 
+- The published data is timestamps, durations, and the `PROVIDER` label you
+  choose — never your IP address or hostname.
 - Detection resolution is the cron interval (1 minute) — sub-minute blips can
   slip between checks.
 - If the router loses power during an outage, the recorded start time survives

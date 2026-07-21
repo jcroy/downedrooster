@@ -447,7 +447,7 @@
       outs.push({ monitor: rand() < 0.82 ? 'wan' : 'db', start: new Date(start), end: new Date(start + dur * 1000), dur: dur });
     }
     outs.sort(function (a, b) { return b.start - a.start; });
-    return { outages: outs, heartbeat: { last_heartbeat: new Date(now - 47 * 60000).toISOString(), interval_hours: 6 } };
+    return { outages: outs, heartbeat: { last_heartbeat: new Date(now - 47 * 60000).toISOString(), interval_hours: 6, provider: 'Cox' } };
   }
 
   function load() {
@@ -482,17 +482,19 @@
     var last = hb && hb.last_heartbeat ? new Date(hb.last_heartbeat) : null;
     if (last && isNaN(last)) last = null;
     var iv = hb && Number(hb.interval_hours) > 0 ? Number(hb.interval_hours) : 6;
+    var provider = hb && typeof hb.provider === 'string' && hb.provider.trim() ? hb.provider.trim() : '';
+    var line = provider ? 'the ' + provider + ' line' : 'the line';
 
     var cls, glyph, text, subText;
     if (!last) {
       cls = 'idle'; glyph = '◌'; text = 'Awaiting first report';
-      subText = 'The router hasn’t crowed yet — install the monitor and give it a minute.';
+      subText = 'Standing by to watch ' + line + ' — install the monitor and give it a minute.';
     } else if (Date.now() - last.getTime() < (iv * 2 + 0.5) * 3600e3) {
       cls = 'good'; glyph = '●'; text = 'All clear';
-      subText = 'The rooster last crowed ' + fmtAgo(last) + ' · reports every ' + iv + 'h';
+      subText = 'Watching ' + line + ' · the rooster last crowed ' + fmtAgo(last) + ' · reports every ' + iv + 'h';
     } else {
       cls = 'warn'; glyph = '▲'; text = 'Monitor silent';
-      subText = 'No heartbeat since ' + fmtWhen(last) + ' — the line (or the router) may be down right now.';
+      subText = 'No heartbeat since ' + fmtWhen(last) + ' — ' + line + ' (or the router) may be down right now.';
     }
 
     el.className = 'status ' + cls;

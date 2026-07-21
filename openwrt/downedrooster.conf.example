@@ -10,6 +10,10 @@ GITHUB_REPO="jcroy/downedrooster"
 #   https://github.com/settings/personal-access-tokens/new
 GITHUB_TOKEN=""
 
+# ISP name shown on the dashboard ("watching the Cox line"). Plain name, no
+# quotes/backslashes inside. The page never shows your IP — only this label.
+PROVIDER="Cox"
+
 # Branch GitHub Pages serves from.
 #GITHUB_BRANCH="main"
 

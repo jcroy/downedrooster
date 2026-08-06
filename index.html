@@ -234,6 +234,7 @@
   }
   .truncnote { margin-top: 10px; font-size: 11.5px; color: var(--muted); }
   .truncnote[hidden] { display: none; }
+  .flag { color: var(--warn); cursor: help; }
 
   /* ---------- footer ---------- */
   footer {
@@ -352,6 +353,7 @@
       </table>
     </div>
     <div class="empty" id="logempty" hidden></div>
+    <p class="truncnote" id="gapnote" hidden></p>
     <p class="truncnote" id="truncnote" hidden></p>
   </section>
 
@@ -417,7 +419,11 @@
           monitor: String(o.monitor || 'wan'),
           start: new Date(o.start),
           end: new Date(o.end),
-          dur: Number(o.duration_seconds) || 0
+          dur: Number(o.duration_seconds) || 0,
+          // Records the monitor could not watch all the way through carry
+          // these; older records predate them and are taken as watched.
+          confirmed: o.confirmed !== false,
+          gap: Number(o.gap_seconds) || 0
         };
       })
       .filter(function (o) { return !isNaN(o.start) && !isNaN(o.end); })
@@ -444,9 +450,16 @@
       else if (r < 0.85) dur = 600 + rand() * 3000;
       else dur = 3600 + rand() * 4 * 3600;
       dur = Math.round(dur);
-      outs.push({ monitor: rand() < 0.82 ? 'wan' : 'db', start: new Date(start), end: new Date(start + dur * 1000), dur: dur });
+      outs.push({ monitor: rand() < 0.82 ? 'wan' : 'db', start: new Date(start), end: new Date(start + dur * 1000), dur: dur, confirmed: true, gap: 0 });
     }
     outs.sort(function (a, b) { return b.start - a.start; });
+    // one record the monitor lost sight of, to show the treatment
+    if (outs[3]) {
+      outs[3].dur = 60;
+      outs[3].end = new Date(outs[3].start.getTime() + 60000);
+      outs[3].confirmed = false;
+      outs[3].gap = 246840;
+    }
     return { outages: outs, heartbeat: { last_heartbeat: new Date(now - 47 * 60000).toISOString(), interval_hours: 6, provider: 'Cox' } };
   }
 
@@ -734,6 +747,7 @@
     trunc.hidden = rows.length <= MAX;
     if (rows.length > MAX) trunc.textContent = 'Showing the ' + MAX + ' most recent of ' + rows.length + ' outages — the rest live in data/outages.jsonl.';
 
+    var unwatched = 0;
     rows.slice(0, MAX).forEach(function (o) {
       var tr = document.createElement('tr');
       var began = document.createElement('td');
@@ -750,9 +764,27 @@
       var dur = document.createElement('td');
       dur.className = 'num';
       dur.textContent = fmtDur(o.dur);
+      if (!o.confirmed) {
+        unwatched++;
+        var msg = 'the monitor stopped watching for ' + fmtDur(o.gap)
+          + ' after this — the line may have come back at any point in there';
+        var flag = document.createElement('span');
+        flag.className = 'flag';
+        flag.textContent = ' ⚠';
+        flag.title = msg;
+        flag.setAttribute('role', 'img');
+        flag.setAttribute('aria-label', msg);
+        dur.appendChild(flag);
+      }
       tr.appendChild(began); tr.appendChild(ended); tr.appendChild(mon); tr.appendChild(dur);
       body.appendChild(tr);
     });
+
+    var gapnote = $('#gapnote');
+    gapnote.hidden = unwatched === 0;
+    gapnote.textContent = unwatched
+      ? '⚠ marks an outage the monitor lost sight of — a reboot, a crash or a full flash stopped it reporting partway through. Only downtime it actually watched is counted; the rest is a blank in the record, not an outage.'
+      : '';
   }
 
   function render() {

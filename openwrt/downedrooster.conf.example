@@ -35,3 +35,16 @@ PROVIDER="Cox"
 # outage that includes a power cut survives reboot — written only on up/down
 # transitions, never on the every-minute check.
 #STATE_DIR="/etc/downedrooster"
+
+# Scratch state that SHOULD die with a reboot: the lock, the heartbeat timer,
+# and the sightings that prove the monitor was watching. Must be on tmpfs.
+#RUN_DIR="/tmp/downedrooster"
+
+# How often cron runs the script. Also the resolution of every measurement.
+#POLL_SECONDS="60"
+
+# How long the monitor may go without confirming a link is still down before it
+# admits it stopped watching. Downtime past that point is reported as a gap
+# instead of being counted — this is what stops a stalled cron or an unwritable
+# flash from turning a one-minute blip into a multi-day outage.
+#MAX_GAP_SECONDS="180"

@@ -18,7 +18,10 @@ PING_TARGETS="${PING_TARGETS:-1.1.1.1 8.8.8.8 9.9.9.9}"
 DB_CHECK_CMD="${DB_CHECK_CMD:-}"        # optional second monitor; exit 0 = up
 HEARTBEAT_HOURS="${HEARTBEAT_HOURS:-6}" # 0 disables heartbeat
 PROVIDER="${PROVIDER:-}"                # ISP name shown on the dashboard (never the IP)
-STATE_DIR="${STATE_DIR:-/etc/downedrooster}"
+STATE_DIR="${STATE_DIR:-/etc/downedrooster}"        # survives reboot (flash)
+RUN_DIR="${RUN_DIR:-/tmp/downedrooster}"            # cleared by reboot (tmpfs)
+POLL_SECONDS="${POLL_SECONDS:-60}"      # how often cron runs this script
+MAX_GAP_SECONDS="${MAX_GAP_SECONDS:-$((POLL_SECONDS * 3))}"  # missed checks before we admit we stopped watching
 OUTAGES_PATH="${OUTAGES_PATH:-data/outages.jsonl}"
 HEARTBEAT_PATH="${HEARTBEAT_PATH:-data/heartbeat.json}"
 
@@ -28,11 +31,12 @@ NOW=$(date -u +%s)
 NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 log() { logger -t downedrooster "$*"; }
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -D %s -d "$1" +%Y-%m-%dT%H:%M:%SZ; }
 
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$RUN_DIR"
 
 # One run at a time; a lock older than 10 minutes is stale (crashed run).
-LOCK="/tmp/downedrooster.lock"
+LOCK="$RUN_DIR/lock"
 if [ -f "$LOCK" ]; then
     lock_ts=$(cat "$LOCK" 2>/dev/null)
     [ -n "$lock_ts" ] && [ $((NOW - lock_ts)) -lt 600 ] && exit 0
@@ -48,21 +52,92 @@ net_up() {
 }
 
 # track <monitor> <0=up|1=down> — record transitions, queue finished outages.
-# State survives reboot (flash), but is only written on transitions.
+#
+# An outage lasts as long as we SAW the link down, never as long as the clock
+# says it has been since it dropped. Those differ whenever the monitor stops
+# looking: a stalled cron, a reboot, a read-only or full flash that refuses to
+# clear the marker. Counting the blind stretch as downtime turns "we lost
+# track" into "the internet was out" and inflates a one-minute blip into days.
+#
+# So each check that finds the link down stamps a sighting in RUN_DIR — RAM, so
+# it costs no flash write, and a reboot wipes it, which is exactly the truth: we
+# were not watching. A stretch longer than MAX_GAP_SECONDS with no sighting is
+# banked as blind time and published as a gap the dashboard can flag, never as
+# downtime. Only start and banked blind time live on flash, still written on
+# transitions alone.
 track() {
-    sf="$STATE_DIR/$1.down"
+    sf="$STATE_DIR/$1.down"           # start_ts start_iso blind_seconds
+    seen="$RUN_DIR/$1.seen"           # last check that confirmed it down
+
     if [ "$2" = "1" ]; then
         if [ ! -f "$sf" ]; then
-            echo "$NOW $NOW_ISO" > "$sf"
+            printf '%s %s 0\n' "$NOW" "$NOW_ISO" > "$sf" || log "ERROR: cannot write $sf"
             log "$1 went DOWN"
+        else
+            # Still down. If we lost sight of it since the last check, bank the
+            # blind stretch now — it is rare, so the flash write is cheap.
+            read -r start_ts start_iso blind < "$sf"
+            [ -n "$blind" ] || blind=0
+            last=$(cat "$seen" 2>/dev/null)
+            [ -n "$last" ] || last="$start_ts"
+            gap=$((NOW - last))
+            if [ "$gap" -gt "$MAX_GAP_SECONDS" ]; then
+                printf '%s %s %s\n' "$start_ts" "$start_iso" "$((blind + gap))" > "$sf" \
+                    || log "ERROR: cannot write $sf"
+                log "$1 unwatched for ${gap}s mid-outage — not counting it as downtime"
+            fi
         fi
-    elif [ -f "$sf" ]; then
-        read -r start_ts start_iso < "$sf"
-        dur=$((NOW - start_ts))
-        printf '{"monitor":"%s","start":"%s","end":"%s","duration_seconds":%s}\n' \
-            "$1" "$start_iso" "$NOW_ISO" "$dur" >> "$QUEUE"
-        rm -f "$sf"
-        log "$1 back UP after ${dur}s"
+        echo "$NOW" > "$seen"
+        return 0
+    fi
+
+    [ -f "$sf" ] || return 0
+
+    read -r start_ts start_iso blind < "$sf"
+    [ -n "$blind" ] || blind=0
+    last=$(cat "$seen" 2>/dev/null)
+    [ -n "$last" ] || last="$start_ts"
+
+    # Up again. A recent sighting means we watched it come back, so the outage
+    # ran until now. A stale one means we only know it was down as far as that
+    # sighting, plus the one poll interval that is our detection resolution —
+    # everything after that is blind, not downtime.
+    trailing=0
+    if [ $((NOW - last)) -le "$MAX_GAP_SECONDS" ]; then
+        end_ts="$NOW"
+        end_iso="$NOW_ISO"
+    else
+        end_ts=$((last + POLL_SECONDS))
+        [ "$end_ts" -gt "$NOW" ] && end_ts="$NOW"
+        end_iso=$(iso "$end_ts")
+        trailing=$((NOW - end_ts))
+    fi
+
+    # Blind stretches inside the outage come off its duration; the one after it
+    # ends never counted towards it. Both are reported as the gap.
+    dur=$((end_ts - start_ts - blind))
+    [ "$dur" -lt 0 ] && dur=0
+    blind=$((blind + trailing))
+
+    if [ "$blind" -gt 0 ]; then
+        rec=$(printf '{"monitor":"%s","start":"%s","end":"%s","duration_seconds":%s,"confirmed":false,"gap_seconds":%s}' \
+            "$1" "$start_iso" "$end_iso" "$dur" "$blind")
+        note="back UP — ${dur}s confirmed down, ${blind}s unwatched"
+    else
+        rec=$(printf '{"monitor":"%s","start":"%s","end":"%s","duration_seconds":%s}' \
+            "$1" "$start_iso" "$end_iso" "$dur")
+        note="back UP after ${dur}s"
+    fi
+
+    # Only forget the outage once its record is safely queued.
+    if printf '%s\n' "$rec" >> "$QUEUE"; then
+        log "$1 $note"
+        rm -f "$sf" "$seen"
+        if [ -f "$sf" ]; then
+            log "ERROR: cannot clear $sf — $STATE_DIR may be read-only or full"
+        fi
+    else
+        log "ERROR: cannot append to $QUEUE — $1 outage held open for retry"
     fi
 }
 
@@ -116,9 +191,9 @@ if [ -s "$QUEUE" ]; then
 fi
 
 # Heartbeat so the dashboard can tell "no outages" from "monitor dead".
-# Timer lives in /tmp: a reboot just sends one extra heartbeat.
+# Timer lives in RUN_DIR: a reboot just sends one extra heartbeat.
 if [ "$HEARTBEAT_HOURS" -gt 0 ] 2>/dev/null; then
-    hb="/tmp/downedrooster.heartbeat"
+    hb="$RUN_DIR/heartbeat"
     last=$(cat "$hb" 2>/dev/null)
     [ -n "$last" ] || last=0
     if [ $((NOW - last)) -ge $((HEARTBEAT_HOURS * 3600)) ]; then

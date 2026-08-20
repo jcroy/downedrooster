@@ -1,3 +1,4 @@
 {"monitor":"wan","start":"2026-07-21T23:19:00Z","end":"2026-07-21T23:20:00Z","duration_seconds":60}
 {"monitor":"wan","start":"2026-07-31T15:20:00Z","end":"2026-07-31T15:21:00Z","duration_seconds":60}
 {"monitor":"wan","start":"2026-07-31T15:22:00Z","end":"2026-07-31T15:23:00Z","duration_seconds":60,"confirmed":false,"gap_seconds":246840}
+{"monitor":"wan","start":"2026-08-18T13:46:00Z","end":"2026-08-18T13:48:00Z","duration_seconds":120,"confirmed":false,"gap_seconds":182940}

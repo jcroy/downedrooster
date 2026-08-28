@@ -8,3 +8,4 @@
 {"monitor":"wan","start":"2026-08-21T01:52:00Z","end":"2026-08-21T01:53:00Z","duration_seconds":60,"confirmed":false,"gap_seconds":71220}
 {"monitor":"wan","start":"2026-08-24T23:33:00Z","end":"2026-08-24T23:34:00Z","duration_seconds":60}
 {"monitor":"wan","start":"2026-08-28T06:01:00Z","end":"2026-08-28T06:03:00Z","duration_seconds":120}
+{"monitor":"wan","start":"2026-08-28T06:14:00Z","end":"2026-08-28T06:16:00Z","duration_seconds":120}
